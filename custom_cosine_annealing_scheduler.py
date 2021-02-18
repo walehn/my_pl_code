@@ -1,3 +1,4 @@
+
 import math
 from torch.optim.lr_scheduler import _LRScheduler
 
@@ -17,6 +18,9 @@ class CosineAnnealingWarmUpRestarts(_LRScheduler):
         self.T_i = T_0
         self.gamma = gamma
         self.cycle = 0
+        #self.optimizer = optimizer
+        #self.last_epoch = last_epoch
+        self.T_cur = last_epoch
         super(CosineAnnealingWarmUpRestarts, self).__init__(optimizer, last_epoch)
         self.T_cur = last_epoch
     
