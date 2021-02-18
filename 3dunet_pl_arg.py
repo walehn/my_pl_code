@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import pytorch_lightning as pl
-from pytorch_lightning.metrics.functional.classification import dice_score
+from pytorch_lightning.callbacks import LearningRateMonitor
 import time, math
 
 import torchio as tio
@@ -22,6 +22,7 @@ from monai.transforms import (
 )
 from monai.utils import set_determinism
 from network.deeplabv3_3d import DeepLabV3_3D
+from custom_cosine_annealing_scheduler import CosineAnnealingWarmUpRestarts
 
 os.environ["MONAI_DATA_DIRECTORY"] = "./data"
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -33,11 +34,11 @@ print(root_dir)
 set_determinism(seed=0)
 
 bs = 8
-Height = 160
+Height = 128
 Width = Height
-Depth = 16
-epoch_num = 6
-l_rate = 5e-4
+Depth = 8
+epoch_num = 100
+l_rate = 0
 ku = "unet"
 precision = 16
 gpu_num = 1
@@ -55,7 +56,7 @@ class Net(pl.LightningModule):
             in_channels=1,
             out_channels=2,
             channels=(32, 64, 128, 256, 512),
-            strides=(2, 2, 2, 2),
+            strides=(2, 2, 2,(2,2,1)),
             num_res_units=8,
             norm=Norm.BATCH,
             dropout=0.4)
@@ -74,7 +75,8 @@ class Net(pl.LightningModule):
   
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self._model.parameters(), lr = l_rate, weight_decay=0.001)
-        return optimizer
+        lr_scheduler = CosineAnnealingWarmUpRestarts(optimizer=optimizer,T_0=100,T_mult=1,eta_max=0.01,T_up=10,gamma=0.5)
+        return [optimizer], [lr_scheduler]
 
     def training_step(self,batch,batch_idx):
             images, labels = batch["image"], batch["label"]
@@ -255,18 +257,23 @@ net = Net(bs,Height,Depth,epoch_num,l_rate,ku)
 chk_path = "./checkpoints/"
 log_dir = os.path.join(chk_path,"logs")
 tb_logger = pl.loggers.TensorBoardLogger(save_dir=log_dir)
+version = tb_logger.version
+print(version)
 checkpoint_callback = pl.callbacks.ModelCheckpoint(
     monitor = 'val_metric',
     mode = 'max',
     dirpath = chk_path,
-    filename =f"{ku}"+"-{epoch}-{val_loss:.2f}-{val_metric:.2f}",
+    filename =f"{ku}"+"-{epoch}-{val_loss:.2f}-{val_metric:.2f}-Ver."+f"{version}",
 )
+
+lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
 #inti pl trainer
 trainer = pl.Trainer(
     gpus=gpu_num,
     max_epochs=epoch_num,
     logger=tb_logger,
+    callbacks=[lr_monitor],
     checkpoint_callback=checkpoint_callback,
     num_sanity_val_steps=1,
     auto_lr_find=False,
